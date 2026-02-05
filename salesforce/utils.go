@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/iancoleman/strcase"
@@ -396,6 +397,17 @@ func isColumnAvailable(columnName string, columns []*plugin.Column) bool {
 		}
 	}
 	return false
+}
+
+var sandboxPattern = regexp.MustCompile(`(?i)(sandbox|[/.]cs\d+\.|test\.salesforce\.com)`)
+
+// loginURL determines the Salesforce login endpoint based on the instance URL.
+// Sandbox instances use test.salesforce.com, production uses login.salesforce.com.
+func loginURL(instanceURL string) string {
+	if sandboxPattern.MatchString(instanceURL) {
+		return "https://test.salesforce.com"
+	}
+	return "https://login.salesforce.com"
 }
 
 // loadPrivateKey returns the PEM string from either inline config or file.

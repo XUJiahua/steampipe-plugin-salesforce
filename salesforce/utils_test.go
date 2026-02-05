@@ -554,3 +554,27 @@ func TestLoadPrivateKey_FileNotFound(t *testing.T) {
 		t.Error("expected error for missing file")
 	}
 }
+
+func TestLoginURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"production", "https://na01.salesforce.com/", "https://login.salesforce.com"},
+		{"production no slash", "https://na01.salesforce.com", "https://login.salesforce.com"},
+		{"sandbox", "https://mycompany--dev.sandbox.my.salesforce.com/", "https://test.salesforce.com"},
+		{"sandbox cs", "https://cs42.salesforce.com/", "https://test.salesforce.com"},
+		{"test keyword", "https://test.salesforce.com/", "https://test.salesforce.com"},
+		{"my.salesforce.com prod", "https://mycompany.my.salesforce.com/", "https://login.salesforce.com"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := loginURL(tt.input)
+			if got != tt.expected {
+				t.Errorf("loginURL(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
