@@ -446,6 +446,26 @@ func TestBuildQueryFromQuals(t *testing.T) {
 	})
 }
 
+func stringPtr(s string) *string { return &s }
+
+func TestGetConfig_NewFields(t *testing.T) {
+	// Verify the struct has the new fields by setting them
+	cfg := salesforceConfig{
+		AccessToken:    stringPtr("tok_123"),
+		PrivateKey:     stringPtr("-----BEGIN RSA PRIVATE KEY-----"),
+		PrivateKeyFile: stringPtr("/path/to/key.pem"),
+	}
+	if *cfg.AccessToken != "tok_123" {
+		t.Errorf("AccessToken = %q, want %q", *cfg.AccessToken, "tok_123")
+	}
+	if *cfg.PrivateKey != "-----BEGIN RSA PRIVATE KEY-----" {
+		t.Errorf("PrivateKey not set correctly")
+	}
+	if *cfg.PrivateKeyFile != "/path/to/key.pem" {
+		t.Errorf("PrivateKeyFile not set correctly")
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstring(s, substr))
 }

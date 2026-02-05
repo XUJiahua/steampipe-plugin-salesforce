@@ -16,6 +16,9 @@ type salesforceConfig struct {
 	Username         *string               `hcl:"username"`
 	Password         *string               `hcl:"password"`
 	Token            *string               `hcl:"token"`
+	AccessToken      *string               `hcl:"access_token"`
+	PrivateKey       *string               `hcl:"private_key"`
+	PrivateKeyFile   *string               `hcl:"private_key_file"`
 	ClientId         *string               `hcl:"client_id"`
 	APIVersion       *string               `hcl:"api_version"`
 	Objects          *[]string             `hcl:"objects"`
