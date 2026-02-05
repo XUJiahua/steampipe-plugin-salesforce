@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/iancoleman/strcase"
@@ -395,4 +396,20 @@ func isColumnAvailable(columnName string, columns []*plugin.Column) bool {
 		}
 	}
 	return false
+}
+
+// loadPrivateKey returns the PEM string from either inline config or file.
+// Inline takes precedence over file.
+func loadPrivateKey(privateKey *string, privateKeyFile *string) (string, error) {
+	if privateKey != nil && *privateKey != "" {
+		return *privateKey, nil
+	}
+	if privateKeyFile != nil && *privateKeyFile != "" {
+		data, err := os.ReadFile(*privateKeyFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read private key file %q: %v", *privateKeyFile, err)
+		}
+		return string(data), nil
+	}
+	return "", fmt.Errorf("either private_key or private_key_file must be set")
 }

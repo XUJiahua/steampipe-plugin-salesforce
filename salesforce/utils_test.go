@@ -2,13 +2,18 @@ package salesforce
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/quals"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"time"
 )
 
 func TestGetSalesforceColumnName(t *testing.T) {
@@ -477,4 +482,75 @@ func containsSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func generateTestRSAKey(t *testing.T) (*rsa.PrivateKey, string) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate RSA key: %v", err)
+	}
+	pemBytes := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	})
+	return key, string(pemBytes)
+}
+
+func TestLoadPrivateKey_InlineString(t *testing.T) {
+	_, pemStr := generateTestRSAKey(t)
+	got, err := loadPrivateKey(&pemStr, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == "" {
+		t.Error("expected non-empty PEM string")
+	}
+}
+
+func TestLoadPrivateKey_FromFile(t *testing.T) {
+	_, pemStr := generateTestRSAKey(t)
+	tmpFile, err := os.CreateTemp("", "test-key-*.pem")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpFile.Name())
+	tmpFile.WriteString(pemStr)
+	tmpFile.Close()
+
+	filePath := tmpFile.Name()
+	got, err := loadPrivateKey(nil, &filePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == "" {
+		t.Error("expected non-empty PEM string")
+	}
+}
+
+func TestLoadPrivateKey_InlineTakesPrecedence(t *testing.T) {
+	_, pemStr := generateTestRSAKey(t)
+	bogusFile := "/nonexistent/path.pem"
+	got, err := loadPrivateKey(&pemStr, &bogusFile)
+	if err != nil {
+		t.Fatalf("inline should take precedence, got error: %v", err)
+	}
+	if got != pemStr {
+		t.Error("expected inline key to be returned")
+	}
+}
+
+func TestLoadPrivateKey_BothNil(t *testing.T) {
+	_, err := loadPrivateKey(nil, nil)
+	if err == nil {
+		t.Error("expected error when both are nil")
+	}
+}
+
+func TestLoadPrivateKey_FileNotFound(t *testing.T) {
+	path := "/nonexistent/key.pem"
+	_, err := loadPrivateKey(nil, &path)
+	if err == nil {
+		t.Error("expected error for missing file")
+	}
 }
