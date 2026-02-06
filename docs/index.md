@@ -103,9 +103,144 @@ connection "salesforce" {
 
 ### Credentials
 
-- [Create your connected application](https://trailhead.salesforce.com/en/content/learn/projects/build-a-connected-app-for-api-integration/create-a-connected-app)
-- Configure basic [connected application settings](https://help.salesforce.com/s/articleView?id=sf.connected_app_create_basics.htm&type=5)
-- Reset your [security token](https://help.salesforce.com/articleView?id=user_security_token.htm&type=5), which is required if you are connecting from an IP address outside your company's trusted IP range
+The plugin supports three authentication methods. Choose the one that fits your use case:
+
+| Method | Best For | Setup Complexity |
+|--------|----------|------------------|
+| [Pre-obtained Access Token](#obtaining-an-access-token) | Quick testing, existing OAuth flows | Low |
+| [JWT Bearer Flow](#setting-up-jwt-bearer-flow) | Production, automation, CI/CD | Medium |
+| [Username/Password](#username-password-setup) | Simple setups, development | Low |
+
+#### Obtaining an Access Token
+
+The easiest way to get an access token is using the [Salesforce CLI](https://developer.salesforce.com/tools/salesforcecli):
+
+```bash
+# Install Salesforce CLI (if not already installed)
+npm install -g @salesforce/cli
+
+# Login to your Salesforce org (opens browser)
+sf org login web --alias my-org
+
+# Display credentials including access token
+sf org display --target-org my-org --json
+```
+
+The output includes `accessToken` and `instanceUrl`:
+
+```json
+{
+  "result": {
+    "accessToken": "00D...",
+    "instanceUrl": "https://na01.salesforce.com"
+  }
+}
+```
+
+Use these values in your configuration:
+
+```hcl
+connection "salesforce" {
+  plugin       = "salesforce"
+  url          = "https://na01.salesforce.com/"
+  access_token = "00D..."
+}
+```
+
+**Note:** Access tokens typically expire after 2 hours. For long-running or automated use cases, consider using the JWT Bearer Flow instead.
+
+#### Setting Up JWT Bearer Flow
+
+JWT Bearer Flow is recommended for production and automation scenarios. It requires a one-time setup of a Connected App with a certificate.
+
+**Step 1: Generate RSA Key Pair**
+
+```bash
+# Generate private key
+openssl genrsa -out server.key 2048
+
+# Generate self-signed certificate (valid for 1 year)
+openssl req -new -x509 -key server.key -out server.crt -days 365 -subj "/CN=steampipe"
+```
+
+**Step 2: Create Connected App in Salesforce**
+
+1. Log in to Salesforce Setup
+2. Search for **App Manager** → Click **New Connected App**
+3. Fill in the basic information:
+   - **Connected App Name:** `Steampipe`
+   - **API Name:** `Steampipe`
+   - **Contact Email:** Your email address
+4. Enable OAuth Settings:
+   - **Enable OAuth Settings:** ✓
+   - **Callback URL:** `https://localhost` (required but not used for JWT)
+   - **Use digital signatures:** ✓ → Upload `server.crt`
+   - **Selected OAuth Scopes:** Add `api` and `refresh_token, offline_access`
+5. Click **Save**
+6. After saving, note the **Consumer Key** — this is your `client_id`
+
+**Step 3: Pre-authorize Users**
+
+1. In Setup, search for **Manage Connected Apps**
+2. Find your app and click **Manage**
+3. Click **Edit Policies**
+4. Set **Permitted Users** to `Admin approved users are pre-authorized`
+5. Click **Save**
+6. Scroll down to **Profiles** or **Permission Sets** and add the profiles/permission sets for users who will authenticate
+
+**Step 4: Configure the Plugin**
+
+```hcl
+connection "salesforce" {
+  plugin           = "salesforce"
+  url              = "https://na01.salesforce.com/"
+  client_id        = "3MVG9..."              # Consumer Key from Step 2
+  username         = "user@example.com"
+  private_key_file = "/path/to/server.key"
+}
+```
+
+For CI/CD environments, you can use an inline private key via environment variable:
+
+```hcl
+connection "salesforce" {
+  plugin      = "salesforce"
+  url         = "https://na01.salesforce.com/"
+  client_id   = "3MVG9..."
+  username    = "user@example.com"
+  private_key = <<-EOT
+-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEA...
+-----END RSA PRIVATE KEY-----
+EOT
+}
+```
+
+#### Username Password Setup
+
+For username/password authentication:
+
+1. [Reset your security token](https://help.salesforce.com/articleView?id=user_security_token.htm&type=5) — Salesforce emails you a new token
+2. The security token is required unless your IP is in the [organization's trusted IP list](https://help.salesforce.com/s/articleView?id=sf.security_networkaccess.htm&type=5)
+
+```hcl
+connection "salesforce" {
+  plugin   = "salesforce"
+  url      = "https://na01.salesforce.com/"
+  username = "user@example.com"
+  password = "MyPassword"
+  token    = "MySecurityToken"  # Omit if IP is trusted
+}
+```
+
+#### Troubleshooting
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `user hasn't approved this consumer` | User not pre-authorized for JWT | Complete Step 3 of JWT setup |
+| `invalid_grant` | JWT auth failed | Check `username`, certificate upload, and private key path |
+| `INVALID_LOGIN` | Wrong credentials | Verify username, password, and security token |
+| `token response missing instance_url` | Malformed OAuth response | Check Salesforce org status and Connected App configuration |
 
 ### Authentication
 
