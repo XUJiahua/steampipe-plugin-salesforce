@@ -65,18 +65,25 @@ connection "salesforce" {
   # Salesforce instance URL, e.g., "https://na01.salesforce.com/"
   # url = "https://na01.salesforce.com/"
 
-  # Salesforce account name
-  # username = "user@example.com"
+  # Authentication method is auto-detected based on which credentials are provided.
+  # Precedence: access_token > private_key/private_key_file (JWT) > username/password
 
-  # Salesforce account password
+  # Option 1: Pre-obtained OAuth access token
+  # access_token = "00D..."
+
+  # Option 2: JWT Bearer flow - requires client_id, username, and private key
+  # client_id = "3MVG99E3Ry5mh4z_FakeID"
+  # username = "user@example.com"
+  # private_key_file = "/path/to/server.key"
+  # private_key = "-----BEGIN RSA PRIVATE KEY-----\n..."
+
+  # Option 3: Username/Password flow
+  # username = "user@example.com"
   # password = "Dummy@~Password"
+  # token = "ABO5C3PNqOP0BHsPFakeToken"
 
   # The Salesforce security token is only required If the client's IP address is not added to the organization's list of trusted IPs
   # https://help.salesforce.com/s/articleView?id=sf.security_networkaccess.htm&type=5
-  # token = "ABO5C3PNqOP0BHsPFakeToken"
-
-  # Salesforce client ID of the connected app
-  # client_id = "3MVG99E3Ry5mh4z_FakeID"
 
   # List of Salesforce object names to generate additional tables for
   # This argument only accepts exact Salesforce standard and custom object names, e.g., AccountBrand, OpportunityStage, CustomApp__c
@@ -99,6 +106,62 @@ connection "salesforce" {
 - [Create your connected application](https://trailhead.salesforce.com/en/content/learn/projects/build-a-connected-app-for-api-integration/create-a-connected-app)
 - Configure basic [connected application settings](https://help.salesforce.com/s/articleView?id=sf.connected_app_create_basics.htm&type=5)
 - Reset your [security token](https://help.salesforce.com/articleView?id=user_security_token.htm&type=5), which is required if you are connecting from an IP address outside your company's trusted IP range
+
+### Authentication
+
+The plugin supports three authentication methods. The method is auto-detected based on which credentials are provided, with the following precedence: **access_token** > **JWT** > **username/password**.
+
+#### Pre-obtained Access Token
+
+Use a pre-obtained OAuth access token. This is useful when you have an existing OAuth flow or are using a refresh token externally.
+
+```hcl
+connection "salesforce" {
+  plugin       = "salesforce"
+  url          = "https://na01.salesforce.com/"
+  access_token = "00D..."
+}
+```
+
+#### JWT Bearer Flow
+
+Use the [OAuth 2.0 JWT Bearer Flow](https://help.salesforce.com/s/articleView?id=sf.remoteaccess_oauth_jwt_flow.htm&type=5) for server-to-server authentication. Requires a connected app with a certificate.
+
+```hcl
+connection "salesforce" {
+  plugin           = "salesforce"
+  url              = "https://na01.salesforce.com/"
+  client_id        = "3MVG99E3Ry5mh4z..."
+  username         = "user@example.com"
+  private_key_file = "/path/to/server.key"
+}
+```
+
+You can also provide the private key inline using `private_key` instead of `private_key_file`:
+
+```hcl
+connection "salesforce" {
+  plugin      = "salesforce"
+  url         = "https://na01.salesforce.com/"
+  client_id   = "3MVG99E3Ry5mh4z..."
+  username    = "user@example.com"
+  private_key = "-----BEGIN RSA PRIVATE KEY-----\nMIIE..."
+}
+```
+
+#### Username/Password Flow
+
+The traditional username/password authentication. Requires the security token if connecting from an IP outside your trusted range.
+
+```hcl
+connection "salesforce" {
+  plugin   = "salesforce"
+  url      = "https://na01.salesforce.com/"
+  username = "user@example.com"
+  password = "MyPassword"
+  token    = "MySecurityToken"
+}
+```
 
 ## Custom Fields
 

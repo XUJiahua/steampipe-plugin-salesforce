@@ -4,18 +4,25 @@ connection "salesforce" {
   # Salesforce instance URL, e.g., "https://na01.salesforce.com/"
   # url = "https://na01.salesforce.com/"
 
-  # Salesforce account name
-  # username = "user@example.com"
+  # Authentication method is auto-detected based on which credentials are provided.
+  # Precedence: access_token > private_key/private_key_file (JWT) > username/password
 
-  # Salesforce account password
+  # Option 1: Pre-obtained OAuth access token
+  # access_token = "00D..."
+
+  # Option 2: JWT Bearer flow - requires client_id, username, and private key
+  # client_id = "3MVG99E3Ry5mh4z_FakeID"
+  # username = "user@example.com"
+  # private_key_file = "/path/to/server.key"
+  # private_key = "-----BEGIN RSA PRIVATE KEY-----\n..."
+
+  # Option 3: Username/Password flow
+  # username = "user@example.com"
   # password = "Dummy@~Password"
+  # token = "ABO5C3PNqOP0BHsPFakeToken"
 
   # The Salesforce security token is only required If the client's IP address is not added to the organization's list of trusted IPs
   # https://help.salesforce.com/s/articleView?id=sf.security_networkaccess.htm&type=5
-  # token = "ABO5C3PNqOP0BHsPFakeToken"
-
-  # Salesforce client ID of the connected app
-  # client_id = "3MVG99E3Ry5mh4z_FakeID"
 
   # List of Salesforce object names to generate additional tables for
   # This argument only accepts exact Salesforce standard and custom object names, e.g., AccountBrand, OpportunityStage, CustomApp__c
