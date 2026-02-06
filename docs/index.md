@@ -199,9 +199,12 @@ openssl req -new -x509 -key server.key -out server.crt -days 365 -subj "/CN=stea
    - **Enable OAuth Settings:** ✓
    - **Callback URL:** `https://localhost` (required but not used for JWT)
    - **Use digital signatures:** ✓ → Upload `server.crt`
-   - **Selected OAuth Scopes:** Add `api` and `refresh_token, offline_access`
+   - **Selected OAuth Scopes:** Add these two scopes:
+     - `Access and manage your data (api)`
+     - `Perform requests on your behalf at any time (refresh_token, offline_access)`
 5. Click **Save**
-6. After saving, note the **Consumer Key** — this is your `client_id`
+6. **Wait 2-10 minutes** for the Connected App to activate
+7. After activation, note the **Consumer Key** — this is your `client_id`
 
 **Step 3: Pre-authorize Users**
 
