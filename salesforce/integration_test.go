@@ -15,24 +15,64 @@ import (
 func loadEnvAndCreateClient(t *testing.T) *simpleforce.Client {
 	t.Helper()
 
-	// Load .env from repo root
 	_ = godotenv.Load("../.env")
 
 	url := os.Getenv("SALESFORCE_URL")
+	accessToken := os.Getenv("SALESFORCE_ACCESS_TOKEN")
+	privateKey := os.Getenv("SALESFORCE_PRIVATE_KEY")
+	privateKeyFile := os.Getenv("SALESFORCE_PRIVATE_KEY_FILE")
 	username := os.Getenv("SALESFORCE_USERNAME")
 	password := os.Getenv("SALESFORCE_PASSWORD")
 	token := os.Getenv("SALESFORCE_TOKEN")
 	clientID := os.Getenv("SALESFORCE_CLIENT_ID")
 
-	if url == "" || username == "" || password == "" {
-		t.Skip("SALESFORCE_URL, SALESFORCE_USERNAME, SALESFORCE_PASSWORD must be set")
-	}
-
 	if clientID == "" {
 		clientID = "steampipe"
 	}
 
-	client := simpleforce.NewClient(url, clientID, simpleforce.DefaultAPIVersion)
+	apiVersion := simpleforce.DefaultAPIVersion
+
+	// Precedence 1: Pre-obtained access token
+	if accessToken != "" {
+		if url == "" {
+			t.Fatal("SALESFORCE_ACCESS_TOKEN requires SALESFORCE_URL")
+		}
+		client := simpleforce.NewClient(url, clientID, apiVersion)
+		if client == nil {
+			t.Fatal("failed to create simpleforce client")
+		}
+		client.SetSidLoc(accessToken, url)
+		return client
+	}
+
+	// Precedence 2: JWT Bearer flow
+	if privateKey != "" || privateKeyFile != "" {
+		if url == "" || username == "" {
+			t.Fatal("JWT auth requires SALESFORCE_URL and SALESFORCE_USERNAME")
+		}
+		pemKey, err := loadPrivateKey(&privateKey, &privateKeyFile)
+		if err != nil {
+			t.Fatalf("failed to load private key: %v", err)
+		}
+		loginBase := loginURL(url)
+		at, instanceURL, err := loginJWT(loginBase, clientID, username, pemKey)
+		if err != nil {
+			t.Fatalf("JWT login failed: %v", err)
+		}
+		client := simpleforce.NewClient(instanceURL, clientID, apiVersion)
+		if client == nil {
+			t.Fatal("failed to create simpleforce client")
+		}
+		client.SetSidLoc(at, instanceURL)
+		return client
+	}
+
+	// Precedence 3: Username/Password
+	if url == "" || username == "" || password == "" {
+		t.Skip("no valid auth credentials set (need SALESFORCE_ACCESS_TOKEN, SALESFORCE_PRIVATE_KEY/_FILE, or SALESFORCE_USERNAME+PASSWORD)")
+	}
+
+	client := simpleforce.NewClient(url, clientID, apiVersion)
 	if client == nil {
 		t.Fatal("failed to create simpleforce client")
 	}
@@ -145,4 +185,37 @@ func TestIntegration_GenerateQueryEndToEnd(t *testing.T) {
 		t.Fatalf("query failed: %v", err)
 	}
 	t.Logf("returned %d records from generated query", len(result.Records))
+}
+
+func TestIntegration_LoginToken(t *testing.T) {
+	_ = godotenv.Load("../.env")
+	if os.Getenv("SALESFORCE_ACCESS_TOKEN") == "" {
+		t.Skip("SALESFORCE_ACCESS_TOKEN not set")
+	}
+	client := loadEnvAndCreateClient(t)
+	if client == nil {
+		t.Fatal("client is nil after token auth")
+	}
+	// Verify the token works by running a simple query
+	result, err := client.Query("SELECT Id FROM Organization")
+	if err != nil {
+		t.Fatalf("query failed with token auth: %v", err)
+	}
+	t.Logf("token auth: Organization Id = %s", result.Records[0].ID())
+}
+
+func TestIntegration_LoginJWT(t *testing.T) {
+	_ = godotenv.Load("../.env")
+	if os.Getenv("SALESFORCE_PRIVATE_KEY") == "" && os.Getenv("SALESFORCE_PRIVATE_KEY_FILE") == "" {
+		t.Skip("SALESFORCE_PRIVATE_KEY/_FILE not set")
+	}
+	client := loadEnvAndCreateClient(t)
+	if client == nil {
+		t.Fatal("client is nil after JWT auth")
+	}
+	result, err := client.Query("SELECT Id FROM Organization")
+	if err != nil {
+		t.Fatalf("query failed with JWT auth: %v", err)
+	}
+	t.Logf("JWT auth: Organization Id = %s", result.Records[0].ID())
 }
