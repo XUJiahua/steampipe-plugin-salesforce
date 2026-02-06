@@ -483,6 +483,39 @@ func loadPrivateKey(privateKey *string, privateKeyFile *string) (string, error) 
 	return "", fmt.Errorf("either private_key or private_key_file must be set")
 }
 
+// salesforceJWTClaims is a custom JWT claims type that serializes the "aud" claim
+// as a string instead of an array. Salesforce requires the audience to be a string.
+type salesforceJWTClaims struct {
+	Issuer    string `json:"iss"`
+	Subject   string `json:"sub"`
+	Audience  string `json:"aud"`
+	ExpiresAt int64  `json:"exp"`
+}
+
+func (c salesforceJWTClaims) GetExpirationTime() (*jwt.NumericDate, error) {
+	return jwt.NewNumericDate(time.Unix(c.ExpiresAt, 0)), nil
+}
+
+func (c salesforceJWTClaims) GetIssuedAt() (*jwt.NumericDate, error) {
+	return nil, nil
+}
+
+func (c salesforceJWTClaims) GetNotBefore() (*jwt.NumericDate, error) {
+	return nil, nil
+}
+
+func (c salesforceJWTClaims) GetIssuer() (string, error) {
+	return c.Issuer, nil
+}
+
+func (c salesforceJWTClaims) GetSubject() (string, error) {
+	return c.Subject, nil
+}
+
+func (c salesforceJWTClaims) GetAudience() (jwt.ClaimStrings, error) {
+	return jwt.ClaimStrings{c.Audience}, nil
+}
+
 // loginJWT performs the OAuth 2.0 JWT Bearer flow.
 // loginURL is the Salesforce token endpoint base (e.g. "https://login.salesforce.com").
 // Returns the access_token and instance_url from the token response.
@@ -506,13 +539,13 @@ func loginJWT(loginEndpoint, clientID, username, privateKeyPEM string) (string, 
 		}
 	}
 
-	// Build JWT claims
+	// Build JWT claims with string audience (Salesforce requires aud to be a string, not array)
 	now := time.Now()
-	claims := jwt.RegisteredClaims{
+	claims := salesforceJWTClaims{
 		Issuer:    clientID,
 		Subject:   username,
-		Audience:  jwt.ClaimStrings{loginEndpoint},
-		ExpiresAt: jwt.NewNumericDate(now.Add(3 * time.Minute)),
+		Audience:  loginEndpoint,
+		ExpiresAt: now.Add(3 * time.Minute).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	signedJWT, err := token.SignedString(key)
