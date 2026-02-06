@@ -115,10 +115,22 @@ The plugin supports three authentication methods. Choose the one that fits your 
 
 The easiest way to get an access token is using the [Salesforce CLI](https://developer.salesforce.com/tools/salesforcecli):
 
+**Install Salesforce CLI**
+
 ```bash
-# Install Salesforce CLI (if not already installed)
+# macOS (Homebrew)
+brew install sf
+
+# Or via npm (all platforms)
 npm install -g @salesforce/cli
 
+# Verify installation
+sf --version
+```
+
+**Login and Get Token**
+
+```bash
 # Login to your Salesforce org (opens browser)
 sf org login web --alias my-org
 
@@ -132,7 +144,7 @@ The output includes `accessToken` and `instanceUrl`:
 {
   "result": {
     "accessToken": "00D...",
-    "instanceUrl": "https://na01.salesforce.com"
+    "instanceUrl": "https://mycompany.develop.my.salesforce.com"
   }
 }
 ```
@@ -142,12 +154,24 @@ Use these values in your configuration:
 ```hcl
 connection "salesforce" {
   plugin       = "salesforce"
-  url          = "https://na01.salesforce.com/"
+  url          = "https://mycompany.develop.my.salesforce.com/"
   access_token = "00D..."
 }
 ```
 
-**Note:** Access tokens typically expire after 2 hours. For long-running or automated use cases, consider using the JWT Bearer Flow instead.
+**Alternative: Device Flow (No Browser)**
+
+If you prefer not to open a browser (e.g., remote servers), use the device flow:
+
+```bash
+sf org login device --alias my-org
+```
+
+Follow the prompts: visit the provided URL, enter the code, and authenticate in your browser.
+
+**Notes:**
+- Access tokens typically expire after 2 hours. For long-running or automated use cases, consider using the JWT Bearer Flow instead.
+- The CLI handles all Salesforce domain types automatically (`login.salesforce.com`, `*.my.salesforce.com`, `*.develop.my.salesforce.com`, etc.).
 
 #### Setting Up JWT Bearer Flow
 
