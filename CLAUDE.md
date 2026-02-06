@@ -2,17 +2,26 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Build & Install
+## Build & Test
 
 ```bash
-make install    # Builds and installs plugin to ~/.steampipe/plugins/...
+make install           # Build and install plugin to ~/.steampipe/plugins/...
+make test              # Run unit tests
+make test-integration  # Run integration tests (requires .env with Salesforce credentials)
 ```
 
-This compiles all Go files in the root directory with `netgo` build tag using Go 1.24. The binary is placed at `~/.steampipe/plugins/hub.steampipe.io/plugins/turbot/salesforce@latest/steampipe-plugin-salesforce.plugin`.
+The build uses `-tags=netgo` to force pure Go network stack, avoiding cgo. Release builds (`.goreleaser.yml`) additionally set `CGO_ENABLED=0` for fully static binaries.
 
-`netgo` tag 强制使用纯 Go 网络栈（DNS 解析等），避免通过 cgo 依赖系统 C 库。发布构建（`.goreleaser.yml`）同时设置了 `CGO_ENABLED=0` + `-tags=netgo` 来生成完全静态的二进制，确保跨 Linux/macOS 分发时不受 glibc/musl 版本差异影响。Makefile 本地构建没有设 `CGO_ENABLED=0`，因此 `netgo` tag 是本地开发时避免网络代码走 cgo 路径的唯一保障。
+The binary is placed at `~/.steampipe/plugins/hub.steampipe.io/plugins/turbot/salesforce@latest/steampipe-plugin-salesforce.plugin`.
 
-There are no automated tests in this repository.
+### Running a Single Test
+
+```bash
+go test ./salesforce/ -v -run TestFunctionName
+go test -tags integration ./salesforce/ -v -run TestIntegration_LoginJWT -timeout 120s
+```
+
+Integration tests use `//go:build integration` and load credentials from `salesforce/.env` (see `salesforce/.env.example`).
 
 ## Architecture
 
@@ -22,10 +31,20 @@ This is a [Steampipe](https://steampipe.io) plugin that exposes Salesforce objec
 
 The plugin uses **dynamic schema mode** (`plugin.SchemaModeDynamic`). Tables are built at runtime in `pluginTableDefinitions()` (`salesforce/plugin.go`):
 
-1. **Static tables** (15 built-in): Account, Contact, Opportunity, Lead, etc. These have hand-defined columns in `table_salesforce_*.go` files, merged with dynamically-fetched columns from Salesforce metadata.
+1. **Static tables** (16 built-in): Account, Contact, Opportunity, Lead, User, etc. These have hand-defined columns in `table_salesforce_*.go` files, merged with dynamically-fetched columns from Salesforce metadata.
 2. **Dynamic tables**: Created from custom Salesforce objects listed in the `objects` config parameter. Columns are entirely generated from Salesforce `SObject.Describe()` metadata.
 
 Column metadata is fetched concurrently using goroutines with a sync.Mutex-protected map.
+
+### Authentication
+
+`connectRaw()` in `utils.go` supports three methods with precedence: **access_token → JWT Bearer Flow → username/password**.
+
+- **Access Token**: Sets session ID directly via `SetSidLoc()`. Requires `url`.
+- **JWT Bearer Flow**: Signs a JWT with RSA private key, exchanges it at `/services/oauth2/token`. Uses custom `salesforceJWTClaims` type to serialize `aud` as string (Salesforce rejects array format). Requires `client_id`, `username`, `private_key`/`private_key_file`, and `url`.
+- **Username/Password**: Uses `simpleforce.LoginPassword()`. Requires `username`, `password`, `url`, and optionally `token` (security token).
+
+The client is cached in the connection cache after authentication.
 
 ### Naming Conventions
 
@@ -40,7 +59,6 @@ The `naming_convention` config controls table/column naming:
 - **Dynamic table generation**: `generateDynamicTables()` in `plugin.go` maps Salesforce SOAP types to Steampipe column types (string/ID/time→STRING, date/dateTime→TIMESTAMP, boolean→BOOL, double→DOUBLE, int→INT, default→JSON).
 - **Query execution**: `listSalesforceObjectsByTable()` in `table_salesforce_object.go` builds SOQL from table columns via `generateQuery()`, adds WHERE clauses from SQL qualifiers via `buildQueryFromQuals()`, and handles pagination.
 - **Column name mapping**: `getSalesforceColumnName()` converts snake_case back to CamelCase for SOQL, but leaves custom fields (`__c` suffix) unchanged.
-- **Connection**: `connectRaw()` in `utils.go` authenticates via username/password/token, caches the client in the connection cache.
 
 ### Adding a New Static Table
 
