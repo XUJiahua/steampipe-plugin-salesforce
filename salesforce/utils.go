@@ -553,6 +553,9 @@ func loginJWT(loginEndpoint, clientID, username, privateKeyPEM string) (string, 
 	if accessToken == "" {
 		return "", "", fmt.Errorf("token response missing access_token")
 	}
+	if instanceURL == "" {
+		return "", "", fmt.Errorf("token response missing instance_url")
+	}
 
 	return accessToken, instanceURL, nil
 }

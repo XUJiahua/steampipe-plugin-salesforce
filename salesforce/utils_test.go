@@ -641,3 +641,22 @@ func TestLoginJWT_BadKey(t *testing.T) {
 		t.Fatal("expected error for bad PEM key, got nil")
 	}
 }
+
+func TestLoginJWT_MissingInstanceURL(t *testing.T) {
+	_, pemStr := generateTestRSAKey(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Return access_token but no instance_url
+		w.Write([]byte(`{"access_token":"mock_token_123"}`))
+	}))
+	defer server.Close()
+
+	_, _, err := loginJWT(server.URL, "test_client_id", "user@example.com", pemStr)
+	if err == nil {
+		t.Fatal("expected error for missing instance_url, got nil")
+	}
+	if !strings.Contains(err.Error(), "instance_url") {
+		t.Errorf("error should mention 'instance_url', got: %v", err)
+	}
+}
