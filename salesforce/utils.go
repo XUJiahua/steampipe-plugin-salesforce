@@ -2,12 +2,20 @@ package salesforce
 
 import (
 	"context"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/iancoleman/strcase"
 	"github.com/simpleforce/simpleforce"
 	"github.com/turbot/steampipe-plugin-sdk/v5/connection"
@@ -424,4 +432,78 @@ func loadPrivateKey(privateKey *string, privateKeyFile *string) (string, error) 
 		return string(data), nil
 	}
 	return "", fmt.Errorf("either private_key or private_key_file must be set")
+}
+
+// loginJWT performs the OAuth 2.0 JWT Bearer flow.
+// loginURL is the Salesforce token endpoint base (e.g. "https://login.salesforce.com").
+// Returns the access_token and instance_url from the token response.
+func loginJWT(loginEndpoint, clientID, username, privateKeyPEM string) (string, string, error) {
+	// Parse the RSA private key
+	block, _ := pem.Decode([]byte(privateKeyPEM))
+	if block == nil {
+		return "", "", fmt.Errorf("failed to decode PEM block from private key")
+	}
+	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		// Try PKCS8 as fallback
+		keyIface, err2 := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err2 != nil {
+			return "", "", fmt.Errorf("failed to parse private key: %v (PKCS1: %v)", err2, err)
+		}
+		var ok bool
+		key, ok = keyIface.(*rsa.PrivateKey)
+		if !ok {
+			return "", "", fmt.Errorf("PKCS8 key is not RSA")
+		}
+	}
+
+	// Build JWT claims
+	now := time.Now()
+	claims := jwt.RegisteredClaims{
+		Issuer:    clientID,
+		Subject:   username,
+		Audience:  jwt.ClaimStrings{loginEndpoint},
+		ExpiresAt: jwt.NewNumericDate(now.Add(3 * time.Minute)),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	signedJWT, err := token.SignedString(key)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to sign JWT: %v", err)
+	}
+
+	// POST to token endpoint
+	tokenURL := loginEndpoint + "/services/oauth2/token"
+	form := url.Values{
+		"grant_type": {"urn:ietf:params:oauth:grant-type:jwt-bearer"},
+		"assertion":  {signedJWT},
+	}
+
+	resp, err := http.PostForm(tokenURL, form)
+	if err != nil {
+		return "", "", fmt.Errorf("token request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read token response: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", "", fmt.Errorf("failed to parse token response: %v", err)
+	}
+
+	if errMsg, ok := result["error"]; ok {
+		desc, _ := result["error_description"].(string)
+		return "", "", fmt.Errorf("salesforce OAuth error: %s: %s", errMsg, desc)
+	}
+
+	accessToken, _ := result["access_token"].(string)
+	instanceURL, _ := result["instance_url"].(string)
+	if accessToken == "" {
+		return "", "", fmt.Errorf("token response missing access_token")
+	}
+
+	return accessToken, instanceURL, nil
 }

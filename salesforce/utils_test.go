@@ -6,7 +6,12 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -576,5 +581,63 @@ func TestLoginURL(t *testing.T) {
 				t.Errorf("loginURL(%q) = %q, want %q", tt.input, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestLoginJWT_Success(t *testing.T) {
+	_, pemStr := generateTestRSAKey(t)
+
+	// Mock Salesforce token endpoint
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		body, _ := io.ReadAll(r.Body)
+		params, _ := url.ParseQuery(string(body))
+		if params.Get("grant_type") != "urn:ietf:params:oauth:grant-type:jwt-bearer" {
+			t.Errorf("unexpected grant_type: %s", params.Get("grant_type"))
+		}
+		if params.Get("assertion") == "" {
+			t.Error("assertion is empty")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"access_token":"mock_token_123","instance_url":"https://na99.salesforce.com"}`))
+	}))
+	defer server.Close()
+
+	accessToken, instanceURL, err := loginJWT(server.URL, "test_client_id", "user@example.com", pemStr)
+	if err != nil {
+		t.Fatalf("loginJWT failed: %v", err)
+	}
+	if accessToken != "mock_token_123" {
+		t.Errorf("access_token = %q, want %q", accessToken, "mock_token_123")
+	}
+	if instanceURL != "https://na99.salesforce.com" {
+		t.Errorf("instance_url = %q, want %q", instanceURL, "https://na99.salesforce.com")
+	}
+}
+
+func TestLoginJWT_ServerError(t *testing.T) {
+	_, pemStr := generateTestRSAKey(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":"invalid_grant","error_description":"user hasn't approved this consumer"}`))
+	}))
+	defer server.Close()
+
+	_, _, err := loginJWT(server.URL, "test_client_id", "user@example.com", pemStr)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid_grant") {
+		t.Errorf("error should contain 'invalid_grant', got: %v", err)
+	}
+}
+
+func TestLoginJWT_BadKey(t *testing.T) {
+	_, _, err := loginJWT("https://login.salesforce.com", "cid", "user@example.com", "not-a-pem-key")
+	if err == nil {
+		t.Fatal("expected error for bad PEM key, got nil")
 	}
 }

@@ -5,6 +5,7 @@ go 1.24
 toolchain go1.24.1
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/iancoleman/strcase v0.3.0
 	github.com/joho/godotenv v1.5.1
 	github.com/simpleforce/simpleforce v0.0.0-20211207104336-af9d9a281fea
