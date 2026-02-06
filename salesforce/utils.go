@@ -29,7 +29,9 @@ func connect(ctx context.Context, d *plugin.QueryData) (*simpleforce.Client, err
 	return connectRaw(ctx, d.ConnectionCache, d.Connection)
 }
 
-// connect:: returns salesforce client after authentication
+// connectRaw returns a Salesforce client after authentication.
+// Authentication method is selected based on which credentials are configured.
+// Precedence: access_token > private_key/private_key_file (JWT) > username/password
 func connectRaw(ctx context.Context, cc *connection.ConnectionCache, c *plugin.Connection) (*simpleforce.Client, error) {
 	// Load connection from cache, which preserves throttling protection etc
 	cacheKey := "simpleforce"
@@ -42,58 +44,105 @@ func connectRaw(ctx context.Context, cc *connection.ConnectionCache, c *plugin.C
 	config := GetConfig(c)
 	apiVersion := simpleforce.DefaultAPIVersion
 	clientID := "steampipe"
-	securityToken := ""
 
 	if config.ClientId != nil {
 		clientID = *config.ClientId
 	}
-
 	if config.APIVersion != nil {
 		apiVersion = *config.APIVersion
 	}
 
-	if config.Username == nil {
-		plugin.Logger(ctx).Warn("salesforce.connectRaw", "'username' must be set in the connection configuration. Edit your connection configuration file and then restart Steampipe")
-		return nil, nil
-	}
-
-	if config.Password == nil {
-		plugin.Logger(ctx).Warn("salesforce.connectRaw", "'password' must be set in the connection configuration. Edit your connection configuration file and then restart Steampipe")
-		return nil, nil
-	}
-
-	// The Salesforce security token is only required If the client's IP address is not added to the organization's list of trusted IPs
-	// https://help.salesforce.com/s/articleView?id=sf.security_networkaccess.htm&type=5
-	// https://migration.trujay.com/help/how-to-add-an-ip-address-to-whitelist-on-salesforce/
-	if config.Token != nil {
-		securityToken = *config.Token
-	}
-
-	// setup client
-	client := simpleforce.NewClient(*config.URL, clientID, apiVersion)
-	if client == nil {
-		plugin.Logger(ctx).Error("salesforce.connectRaw", "couldn't get salesforce client. Client setup error.")
-		return nil, fmt.Errorf("salesforce.connectRaw couldn't get salesforce client. Client setup error.")
-	}
-
-	// LoginPassword signs into salesforce using password. token is optional if trusted IP is configured.
-	// Ref: https://developer.salesforce.com/docs/atlas.en-us.214.0.api_rest.meta/api_rest/intro_understanding_username_password_oauth_flow.htm
-	// Ref: https://developer.salesforce.com/docs/atlas.en-us.214.0.api.meta/api/sforce_api_calls_login.htm
-	err := client.LoginPassword(*config.Username, *config.Password, securityToken)
-	if err != nil {
-		plugin.Logger(ctx).Error("salesforce.connectRaw", "client login error", err)
-		return nil, fmt.Errorf("client login error %v", err)
-	}
-
-	// Save to cache
-	if cc != nil {
-		err = cc.Set(ctx, cacheKey, client)
-		if err != nil {
-			plugin.Logger(ctx).Error("connectRaw", "cache-set", err)
+	// Precedence 1: Pre-obtained access token
+	if config.AccessToken != nil && *config.AccessToken != "" {
+		if config.URL == nil || *config.URL == "" {
+			return nil, fmt.Errorf("access_token auth requires 'url' to be set")
 		}
+		client := simpleforce.NewClient(*config.URL, clientID, apiVersion)
+		if client == nil {
+			return nil, fmt.Errorf("failed to create salesforce client")
+		}
+		client.SetSidLoc(*config.AccessToken, *config.URL)
+
+		if cc != nil {
+			if err := cc.Set(ctx, cacheKey, client); err != nil {
+				plugin.Logger(ctx).Error("connectRaw", "cache-set", err)
+			}
+		}
+		return client, nil
 	}
 
-	return client, nil
+	// Precedence 2: JWT Bearer flow
+	if (config.PrivateKey != nil && *config.PrivateKey != "") || (config.PrivateKeyFile != nil && *config.PrivateKeyFile != "") {
+		if config.URL == nil || *config.URL == "" {
+			return nil, fmt.Errorf("jwt auth requires 'url' to be set")
+		}
+		if config.Username == nil || *config.Username == "" {
+			return nil, fmt.Errorf("jwt auth requires 'username' to be set")
+		}
+		if config.ClientId == nil || *config.ClientId == "" {
+			return nil, fmt.Errorf("jwt auth requires 'client_id' to be set")
+		}
+
+		pemKey, err := loadPrivateKey(config.PrivateKey, config.PrivateKeyFile)
+		if err != nil {
+			return nil, err
+		}
+
+		loginBase := loginURL(*config.URL)
+		accessToken, instanceURL, err := loginJWT(loginBase, clientID, *config.Username, pemKey)
+		if err != nil {
+			return nil, fmt.Errorf("jwt login failed: %v", err)
+		}
+
+		client := simpleforce.NewClient(instanceURL, clientID, apiVersion)
+		if client == nil {
+			return nil, fmt.Errorf("failed to create salesforce client")
+		}
+		client.SetSidLoc(accessToken, instanceURL)
+
+		if cc != nil {
+			if err := cc.Set(ctx, cacheKey, client); err != nil {
+				plugin.Logger(ctx).Error("connectRaw", "cache-set", err)
+			}
+		}
+		return client, nil
+	}
+
+	// Precedence 3: Username/Password flow
+	if config.Username != nil && *config.Username != "" && config.Password != nil && *config.Password != "" {
+		if config.URL == nil || *config.URL == "" {
+			return nil, fmt.Errorf("password auth requires 'url' to be set")
+		}
+		securityToken := ""
+		// The Salesforce security token is only required If the client's IP address is not added to the organization's list of trusted IPs
+		// https://help.salesforce.com/s/articleView?id=sf.security_networkaccess.htm&type=5
+		// https://migration.trujay.com/help/how-to-add-an-ip-address-to-whitelist-on-salesforce/
+		if config.Token != nil {
+			securityToken = *config.Token
+		}
+
+		client := simpleforce.NewClient(*config.URL, clientID, apiVersion)
+		if client == nil {
+			return nil, fmt.Errorf("failed to create salesforce client")
+		}
+
+		// LoginPassword signs into salesforce using password. token is optional if trusted IP is configured.
+		// Ref: https://developer.salesforce.com/docs/atlas.en-us.214.0.api_rest.meta/api_rest/intro_understanding_username_password_oauth_flow.htm
+		// Ref: https://developer.salesforce.com/docs/atlas.en-us.214.0.api.meta/api/sforce_api_calls_login.htm
+		err := client.LoginPassword(*config.Username, *config.Password, securityToken)
+		if err != nil {
+			return nil, fmt.Errorf("password login failed: %v", err)
+		}
+
+		if cc != nil {
+			if err := cc.Set(ctx, cacheKey, client); err != nil {
+				plugin.Logger(ctx).Error("connectRaw", "cache-set", err)
+			}
+		}
+		return client, nil
+	}
+
+	return nil, fmt.Errorf("no valid authentication credentials configured; provide access_token, private_key/private_key_file, or username/password")
 }
 
 // generateQuery:: returns sql query based on the column names, table name passed
