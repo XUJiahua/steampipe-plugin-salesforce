@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/simpleforce/simpleforce"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/quals"
@@ -682,6 +683,34 @@ func TestIsSessionExpiredError(t *testing.T) {
 				t.Errorf("isSessionExpiredError(%v) = %v, want %v", tt.err, got, tt.expected)
 			}
 		})
+	}
+}
+
+// TestIsSessionExpiredError_SimulatedFromSimpleforce verifies that errors
+// actually produced by simpleforce's httpRequest (401 + INVALID_SESSION_ID)
+// are correctly detected by isSessionExpiredError.
+func TestIsSessionExpiredError_SimulatedFromSimpleforce(t *testing.T) {
+	// Simulate a Salesforce server that returns 401 with INVALID_SESSION_ID
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`[{"message":"Session expired or invalid","errorCode":"INVALID_SESSION_ID"}]`))
+	}))
+	defer server.Close()
+
+	// Create a simpleforce client with a fake session
+	client := simpleforce.NewClient(server.URL, "test", simpleforce.DefaultAPIVersion)
+	client.SetSidLoc("expired_token", server.URL)
+
+	// Query should fail with a session error
+	_, err := client.Query("SELECT Id FROM Account")
+	if err == nil {
+		t.Fatal("expected error from expired session, got nil")
+	}
+
+	// Verify our detector catches this real simpleforce error
+	if !isSessionExpiredError(err) {
+		t.Errorf("isSessionExpiredError should detect simpleforce 401 error, but returned false for: %v", err)
 	}
 }
 

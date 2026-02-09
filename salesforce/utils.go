@@ -434,7 +434,7 @@ func getOrganizationIdUncached(ctx context.Context, d *plugin.QueryData, h *plug
 	// SOQL Query to retrieve organization details
 	query := "SELECT Id, Name, InstanceName, IsSandbox FROM Organization"
 
-	result, err := client.Query(query)
+	_, result, err := queryWithRetry(ctx, d, client, query)
 	if err != nil {
 		plugin.Logger(ctx).Error("salesforce.getOrganizationIdUncached", "api error", err)
 		return nil, err
