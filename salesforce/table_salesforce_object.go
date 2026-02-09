@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/simpleforce/simpleforce"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
 )
@@ -31,7 +32,8 @@ func listSalesforceObjectsByTable(tableName string, salesforceCols map[string]st
 		}
 
 		for {
-			result, err := client.Query(query)
+			var result *simpleforce.QueryResult
+			client, result, err = queryWithRetry(ctx, d, client, query)
 			if err != nil {
 				plugin.Logger(ctx).Error("salesforce.listSalesforceObjectsByTable", "query error", err)
 				return nil, err
@@ -86,9 +88,12 @@ func getSalesforceObjectbyID(tableName string) func(ctx context.Context, d *plug
 			return nil, fmt.Errorf("salesforce.getSalesforceObjectbyID: client_not_found, unable to query table %s because of invalid steampipe salesforce configuration", d.Table.Name)
 		}
 
-		obj := client.SObject(tableName).Get(id)
+		client, obj, err := getWithRetry(ctx, d, client, tableName, id)
+		if err != nil {
+			plugin.Logger(ctx).Error("salesforce.getSalesforceObjectbyID", "get error", err)
+			return nil, err
+		}
 		if obj == nil {
-			// Object doesn't exist, handle the error
 			plugin.Logger(ctx).Warn("salesforce.getSalesforceObjectbyID", fmt.Sprintf("%s with id \"%s\" not found", tableName, id))
 			return nil, nil
 		}

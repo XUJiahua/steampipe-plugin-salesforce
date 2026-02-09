@@ -25,6 +25,8 @@ import (
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
 )
 
+const cacheKeyClient = "simpleforce"
+
 func connect(ctx context.Context, d *plugin.QueryData) (*simpleforce.Client, error) {
 	return connectRaw(ctx, d.ConnectionCache, d.Connection)
 }
@@ -34,7 +36,7 @@ func connect(ctx context.Context, d *plugin.QueryData) (*simpleforce.Client, err
 // Precedence: access_token > private_key/private_key_file (JWT) > username/password
 func connectRaw(ctx context.Context, cc *connection.ConnectionCache, c *plugin.Connection) (*simpleforce.Client, error) {
 	// Load connection from cache, which preserves throttling protection etc
-	cacheKey := "simpleforce"
+	cacheKey := cacheKeyClient
 	if cc != nil {
 		if cachedData, ok := cc.Get(ctx, cacheKey); ok {
 			return cachedData.(*simpleforce.Client), nil
@@ -591,4 +593,103 @@ func loginJWT(loginEndpoint, clientID, username, privateKeyPEM string) (string, 
 	}
 
 	return accessToken, instanceURL, nil
+}
+
+// isSessionExpiredError checks whether an error from simpleforce indicates
+// an expired or invalid Salesforce session.
+// simpleforce errors are plain strings with format:
+//
+//	"[simpleforce] Error. http code: 401 Error Message:  Session expired or invalid Error Code: INVALID_SESSION_ID"
+func isSessionExpiredError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "INVALID_SESSION_ID") ||
+		strings.Contains(msg, "SESSION_EXPIRED") ||
+		strings.Contains(msg, "http code: 401")
+}
+
+// isAccessTokenAuth returns true if the connection config uses a pre-obtained
+// access token (which cannot be refreshed automatically).
+func isAccessTokenAuth(config salesforceConfig) bool {
+	return config.AccessToken != nil && *config.AccessToken != ""
+}
+
+// reconnect clears the cached client and re-authenticates.
+// Returns an error if the current auth method is access_token (cannot refresh).
+func reconnect(ctx context.Context, d *plugin.QueryData) (*simpleforce.Client, error) {
+	config := GetConfig(d.Connection)
+	if isAccessTokenAuth(config) {
+		return nil, fmt.Errorf("salesforce session expired; access_token auth cannot be refreshed automatically — obtain a new token and update the config")
+	}
+
+	plugin.Logger(ctx).Info("salesforce.reconnect", "msg", "session expired, re-authenticating")
+
+	// Clear cached client
+	if d.ConnectionCache != nil {
+		d.ConnectionCache.Delete(ctx, cacheKeyClient)
+	}
+
+	// Re-authenticate
+	return connect(ctx, d)
+}
+
+// queryWithRetry executes a SOQL query via client.Query(). If the query fails
+// due to session expiration, it reconnects and retries once.
+func queryWithRetry(ctx context.Context, d *plugin.QueryData, client *simpleforce.Client, query string) (*simpleforce.Client, *simpleforce.QueryResult, error) {
+	result, err := client.Query(query)
+	if err == nil {
+		return client, result, nil
+	}
+
+	if !isSessionExpiredError(err) {
+		return client, nil, err
+	}
+
+	plugin.Logger(ctx).Warn("salesforce.queryWithRetry", "msg", "session expired, reconnecting", "error", err)
+
+	newClient, reconnErr := reconnect(ctx, d)
+	if reconnErr != nil {
+		return client, nil, reconnErr
+	}
+
+	result, err = newClient.Query(query)
+	return newClient, result, err
+}
+
+// getWithRetry fetches a Salesforce object by ID. Since simpleforce's
+// SObject.Get() swallows errors (returns nil for both "not found" AND
+// "session expired"), this function uses a probe query to disambiguate
+// when Get() returns nil.
+func getWithRetry(ctx context.Context, d *plugin.QueryData, client *simpleforce.Client, tableName string, id string) (*simpleforce.Client, *simpleforce.SObject, error) {
+	obj := client.SObject(tableName).Get(id)
+	if obj != nil {
+		return client, obj, nil
+	}
+
+	// Get() returned nil — could be "not found" or session expired.
+	// Use a probe query to check if the session is still valid.
+	probe := fmt.Sprintf("SELECT Id FROM %s WHERE Id = '%s' LIMIT 1", tableName, id)
+	_, err := client.Query(probe)
+	if err == nil {
+		// Session is valid; object was genuinely not found (or Get() failed for another reason).
+		return client, nil, nil
+	}
+
+	if !isSessionExpiredError(err) {
+		// Session is valid but query failed for another reason; treat original Get() nil as "not found".
+		return client, nil, nil
+	}
+
+	// Session expired — reconnect and retry.
+	plugin.Logger(ctx).Warn("salesforce.getWithRetry", "msg", "session expired during Get, reconnecting", "table", tableName, "id", id)
+
+	newClient, reconnErr := reconnect(ctx, d)
+	if reconnErr != nil {
+		return client, nil, reconnErr
+	}
+
+	obj = newClient.SObject(tableName).Get(id)
+	return newClient, obj, nil
 }

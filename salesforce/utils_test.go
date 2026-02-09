@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -658,5 +659,50 @@ func TestLoginJWT_MissingInstanceURL(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "instance_url") {
 		t.Errorf("error should mention 'instance_url', got: %v", err)
+	}
+}
+
+func TestIsSessionExpiredError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{"nil error", nil, false},
+		{"unrelated error", fmt.Errorf("connection refused"), false},
+		{"INVALID_SESSION_ID", fmt.Errorf("[simpleforce] Error. http code: 401 Error Message:  Session expired or invalid Error Code: INVALID_SESSION_ID"), true},
+		{"SESSION_EXPIRED", fmt.Errorf("Error Code: SESSION_EXPIRED"), true},
+		{"http 401", fmt.Errorf("[simpleforce] Error. http code: 401 Error Message: something"), true},
+		{"http 403 not matched", fmt.Errorf("[simpleforce] Error. http code: 403 Error Message: forbidden"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isSessionExpiredError(tt.err)
+			if got != tt.expected {
+				t.Errorf("isSessionExpiredError(%v) = %v, want %v", tt.err, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIsAccessTokenAuth(t *testing.T) {
+	tok := "some_token"
+	empty := ""
+	tests := []struct {
+		name     string
+		config   salesforceConfig
+		expected bool
+	}{
+		{"with token", salesforceConfig{AccessToken: &tok}, true},
+		{"nil", salesforceConfig{}, false},
+		{"empty string", salesforceConfig{AccessToken: &empty}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isAccessTokenAuth(tt.config)
+			if got != tt.expected {
+				t.Errorf("isAccessTokenAuth() = %v, want %v", got, tt.expected)
+			}
+		})
 	}
 }
