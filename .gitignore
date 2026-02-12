@@ -20,3 +20,5 @@
 
 # Environment variables (credentials)
 .env
+server.crt
+server.key
