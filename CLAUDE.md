@@ -23,6 +23,8 @@ go test -tags integration ./salesforce/ -v -run TestIntegration_LoginJWT -timeou
 
 Integration tests use `//go:build integration` and load credentials from `salesforce/.env` (see `salesforce/.env.example`).
 
+CI runs `golangci-lint` on push to main and PRs (via `.github/workflows/golangci-lint.yml`).
+
 ## Architecture
 
 This is a [Steampipe](https://steampipe.io) plugin that exposes Salesforce objects as SQL tables. It uses the `steampipe-plugin-sdk/v5` framework and `simpleforce` as the Salesforce API client.
@@ -45,6 +47,10 @@ Column metadata is fetched concurrently using goroutines with a sync.Mutex-prote
 - **Username/Password**: Uses `simpleforce.LoginPassword()`. Requires `username`, `password`, `url`, and optionally `token` (security token).
 
 The client is cached in the connection cache after authentication.
+
+### Session Retry
+
+`queryWithRetry()` and `getWithRetry()` in `utils.go` detect expired sessions (`INVALID_SESSION_ID`, `SESSION_EXPIRED`, HTTP 401) via `isSessionExpiredError()`, clear the connection cache, re-authenticate, and retry once. Access token auth cannot auto-refresh (returns a clear error directing the user to obtain a new token).
 
 ### Naming Conventions
 
