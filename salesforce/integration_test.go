@@ -45,7 +45,33 @@ func loadEnvAndCreateClient(t *testing.T) *simpleforce.Client {
 		return client
 	}
 
-	// Precedence 2: JWT Bearer flow
+	// Precedence 2: Refresh Token flow
+	refreshToken := os.Getenv("SALESFORCE_REFRESH_TOKEN")
+	clientSecret := os.Getenv("SALESFORCE_CLIENT_SECRET")
+	if refreshToken != "" {
+		if url == "" {
+			t.Fatal("SALESFORCE_REFRESH_TOKEN requires SALESFORCE_URL")
+		}
+		if clientID == "steampipe" {
+			t.Fatal("SALESFORCE_REFRESH_TOKEN requires SALESFORCE_CLIENT_ID")
+		}
+		if clientSecret == "" {
+			t.Fatal("SALESFORCE_REFRESH_TOKEN requires SALESFORCE_CLIENT_SECRET")
+		}
+		loginBase := loginURL(url)
+		at, instanceURL, err := refreshAccessToken(loginBase, clientID, clientSecret, refreshToken)
+		if err != nil {
+			t.Fatalf("refresh_token login failed: %v", err)
+		}
+		client := simpleforce.NewClient(instanceURL, clientID, apiVersion)
+		if client == nil {
+			t.Fatal("failed to create simpleforce client")
+		}
+		client.SetSidLoc(at, instanceURL)
+		return client
+	}
+
+	// Precedence 3: JWT Bearer flow
 	if privateKey != "" || privateKeyFile != "" {
 		if url == "" || username == "" {
 			t.Fatal("JWT auth requires SALESFORCE_URL and SALESFORCE_USERNAME")
@@ -67,9 +93,9 @@ func loadEnvAndCreateClient(t *testing.T) *simpleforce.Client {
 		return client
 	}
 
-	// Precedence 3: Username/Password
+	// Precedence 4: Username/Password
 	if url == "" || username == "" || password == "" {
-		t.Skip("no valid auth credentials set (need SALESFORCE_ACCESS_TOKEN, SALESFORCE_PRIVATE_KEY/_FILE, or SALESFORCE_USERNAME+PASSWORD)")
+		t.Skip("no valid auth credentials set (need SALESFORCE_ACCESS_TOKEN, SALESFORCE_REFRESH_TOKEN, SALESFORCE_PRIVATE_KEY/_FILE, or SALESFORCE_USERNAME+PASSWORD)")
 	}
 
 	client := simpleforce.NewClient(url, clientID, apiVersion)
@@ -202,6 +228,22 @@ func TestIntegration_LoginToken(t *testing.T) {
 		t.Fatalf("query failed with token auth: %v", err)
 	}
 	t.Logf("token auth: Organization Id = %s", result.Records[0].ID())
+}
+
+func TestIntegration_LoginRefreshToken(t *testing.T) {
+	_ = godotenv.Load("../.env")
+	if os.Getenv("SALESFORCE_REFRESH_TOKEN") == "" {
+		t.Skip("SALESFORCE_REFRESH_TOKEN not set")
+	}
+	client := loadEnvAndCreateClient(t)
+	if client == nil {
+		t.Fatal("client is nil after refresh_token auth")
+	}
+	result, err := client.Query("SELECT Id FROM Organization")
+	if err != nil {
+		t.Fatalf("query failed with refresh_token auth: %v", err)
+	}
+	t.Logf("refresh_token auth: Organization Id = %s", result.Records[0].ID())
 }
 
 func TestIntegration_LoginJWT(t *testing.T) {

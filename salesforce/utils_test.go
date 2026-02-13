@@ -714,6 +714,103 @@ func TestIsSessionExpiredError_SimulatedFromSimpleforce(t *testing.T) {
 	}
 }
 
+func TestRefreshAccessToken_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		body, _ := io.ReadAll(r.Body)
+		params, _ := url.ParseQuery(string(body))
+		if params.Get("grant_type") != "refresh_token" {
+			t.Errorf("unexpected grant_type: %s", params.Get("grant_type"))
+		}
+		if params.Get("client_id") != "test_client_id" {
+			t.Errorf("unexpected client_id: %s", params.Get("client_id"))
+		}
+		if params.Get("client_secret") != "test_secret" {
+			t.Errorf("unexpected client_secret: %s", params.Get("client_secret"))
+		}
+		if params.Get("refresh_token") != "test_refresh_token" {
+			t.Errorf("unexpected refresh_token: %s", params.Get("refresh_token"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"access_token":"new_access_token_123","instance_url":"https://na99.salesforce.com"}`))
+	}))
+	defer server.Close()
+
+	accessToken, instanceURL, err := refreshAccessToken(server.URL, "test_client_id", "test_secret", "test_refresh_token")
+	if err != nil {
+		t.Fatalf("refreshAccessToken failed: %v", err)
+	}
+	if accessToken != "new_access_token_123" {
+		t.Errorf("access_token = %q, want %q", accessToken, "new_access_token_123")
+	}
+	if instanceURL != "https://na99.salesforce.com" {
+		t.Errorf("instance_url = %q, want %q", instanceURL, "https://na99.salesforce.com")
+	}
+}
+
+func TestRefreshAccessToken_OAuthError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":"invalid_grant","error_description":"refresh token is expired or revoked"}`))
+	}))
+	defer server.Close()
+
+	_, _, err := refreshAccessToken(server.URL, "cid", "secret", "bad_token")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid_grant") {
+		t.Errorf("error should contain 'invalid_grant', got: %v", err)
+	}
+}
+
+func TestRefreshAccessToken_MissingAccessToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"instance_url":"https://na99.salesforce.com"}`))
+	}))
+	defer server.Close()
+
+	_, _, err := refreshAccessToken(server.URL, "cid", "secret", "token")
+	if err == nil {
+		t.Fatal("expected error for missing access_token, got nil")
+	}
+	if !strings.Contains(err.Error(), "access_token") {
+		t.Errorf("error should mention 'access_token', got: %v", err)
+	}
+}
+
+func TestRefreshAccessToken_MissingInstanceURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"access_token":"tok_123"}`))
+	}))
+	defer server.Close()
+
+	_, _, err := refreshAccessToken(server.URL, "cid", "secret", "token")
+	if err == nil {
+		t.Fatal("expected error for missing instance_url, got nil")
+	}
+	if !strings.Contains(err.Error(), "instance_url") {
+		t.Errorf("error should mention 'instance_url', got: %v", err)
+	}
+}
+
+func TestGetConfig_RefreshTokenFields(t *testing.T) {
+	cfg := salesforceConfig{
+		RefreshToken: stringPtr("5Aep..."),
+		ClientSecret: stringPtr("secret_abc"),
+	}
+	if *cfg.RefreshToken != "5Aep..." {
+		t.Errorf("RefreshToken = %q, want %q", *cfg.RefreshToken, "5Aep...")
+	}
+	if *cfg.ClientSecret != "secret_abc" {
+		t.Errorf("ClientSecret = %q, want %q", *cfg.ClientSecret, "secret_abc")
+	}
+}
+
 func TestIsAccessTokenAuth(t *testing.T) {
 	tok := "some_token"
 	empty := ""

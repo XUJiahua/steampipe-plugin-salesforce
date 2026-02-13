@@ -33,7 +33,7 @@ func connect(ctx context.Context, d *plugin.QueryData) (*simpleforce.Client, err
 
 // connectRaw returns a Salesforce client after authentication.
 // Authentication method is selected based on which credentials are configured.
-// Precedence: access_token > private_key/private_key_file (JWT) > username/password
+// Precedence: access_token > refresh_token > private_key/private_key_file (JWT) > username/password
 func connectRaw(ctx context.Context, cc *connection.ConnectionCache, c *plugin.Connection) (*simpleforce.Client, error) {
 	// Load connection from cache, which preserves throttling protection etc
 	cacheKey := cacheKeyClient
@@ -73,7 +73,39 @@ func connectRaw(ctx context.Context, cc *connection.ConnectionCache, c *plugin.C
 		return client, nil
 	}
 
-	// Precedence 2: JWT Bearer flow
+	// Precedence 2: Refresh Token flow (OAuth Authorization Code)
+	if config.RefreshToken != nil && *config.RefreshToken != "" {
+		if config.URL == nil || *config.URL == "" {
+			return nil, fmt.Errorf("refresh_token auth requires 'url' to be set")
+		}
+		if config.ClientId == nil || *config.ClientId == "" {
+			return nil, fmt.Errorf("refresh_token auth requires 'client_id' to be set")
+		}
+		if config.ClientSecret == nil || *config.ClientSecret == "" {
+			return nil, fmt.Errorf("refresh_token auth requires 'client_secret' to be set")
+		}
+
+		loginBase := loginURL(*config.URL)
+		accessToken, instanceURL, err := refreshAccessToken(loginBase, clientID, *config.ClientSecret, *config.RefreshToken)
+		if err != nil {
+			return nil, fmt.Errorf("refresh_token login failed: %v", err)
+		}
+
+		client := simpleforce.NewClient(instanceURL, clientID, apiVersion)
+		if client == nil {
+			return nil, fmt.Errorf("failed to create salesforce client")
+		}
+		client.SetSidLoc(accessToken, instanceURL)
+
+		if cc != nil {
+			if err := cc.Set(ctx, cacheKey, client); err != nil {
+				plugin.Logger(ctx).Error("connectRaw", "cache-set", err)
+			}
+		}
+		return client, nil
+	}
+
+	// Precedence 3: JWT Bearer flow
 	if (config.PrivateKey != nil && *config.PrivateKey != "") || (config.PrivateKeyFile != nil && *config.PrivateKeyFile != "") {
 		if config.URL == nil || *config.URL == "" {
 			return nil, fmt.Errorf("jwt auth requires 'url' to be set")
@@ -110,7 +142,7 @@ func connectRaw(ctx context.Context, cc *connection.ConnectionCache, c *plugin.C
 		return client, nil
 	}
 
-	// Precedence 3: Username/Password flow
+	// Precedence 4: Username/Password flow
 	if config.Username != nil && *config.Username != "" && config.Password != nil && *config.Password != "" {
 		if config.URL == nil || *config.URL == "" {
 			return nil, fmt.Errorf("password auth requires 'url' to be set")
@@ -144,7 +176,7 @@ func connectRaw(ctx context.Context, cc *connection.ConnectionCache, c *plugin.C
 		return client, nil
 	}
 
-	return nil, fmt.Errorf("no valid authentication credentials configured; provide access_token, private_key/private_key_file, or username/password")
+	return nil, fmt.Errorf("no valid authentication credentials configured; provide access_token, refresh_token, private_key/private_key_file, or username/password")
 }
 
 // generateQuery:: returns sql query based on the column names, table name passed
@@ -590,6 +622,51 @@ func loginJWT(loginEndpoint, clientID, username, privateKeyPEM string) (string, 
 	}
 	if instanceURL == "" {
 		return "", "", fmt.Errorf("token response missing instance_url")
+	}
+
+	return accessToken, instanceURL, nil
+}
+
+// refreshAccessToken exchanges a refresh_token for a new access_token.
+// loginEndpoint is the Salesforce token endpoint base (e.g. "https://login.salesforce.com").
+// Returns the access_token and instance_url from the token response.
+func refreshAccessToken(loginEndpoint, clientID, clientSecret, refreshToken string) (string, string, error) {
+	tokenURL := loginEndpoint + "/services/oauth2/token"
+	form := url.Values{
+		"grant_type":    {"refresh_token"},
+		"client_id":     {clientID},
+		"client_secret": {clientSecret},
+		"refresh_token": {refreshToken},
+	}
+
+	resp, err := http.PostForm(tokenURL, form)
+	if err != nil {
+		return "", "", fmt.Errorf("refresh request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read refresh response: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", "", fmt.Errorf("failed to parse refresh response: %v", err)
+	}
+
+	if errMsg, ok := result["error"]; ok {
+		desc, _ := result["error_description"].(string)
+		return "", "", fmt.Errorf("salesforce OAuth error: %s: %s", errMsg, desc)
+	}
+
+	accessToken, _ := result["access_token"].(string)
+	instanceURL, _ := result["instance_url"].(string)
+	if accessToken == "" {
+		return "", "", fmt.Errorf("refresh response missing access_token")
+	}
+	if instanceURL == "" {
+		return "", "", fmt.Errorf("refresh response missing instance_url")
 	}
 
 	return accessToken, instanceURL, nil
