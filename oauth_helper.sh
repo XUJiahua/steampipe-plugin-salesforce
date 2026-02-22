@@ -8,7 +8,7 @@ if [ -f .env ]; then set -a; source .env; set +a; fi
 SF_INSTANCE="${SALESFORCE_URL:?Set SALESFORCE_URL in .env}"
 CLIENT_ID="${SALESFORCE_CLIENT_ID:?Set SALESFORCE_CLIENT_ID in .env}"
 CLIENT_SECRET="${SALESFORCE_CLIENT_SECRET:?Set SALESFORCE_CLIENT_SECRET in .env}"
-REDIRECT_URI="http://localhost:1717/OauthRedirect"
+REDIRECT_URI="http://localhost:5173/api/oauth/salesforce/callback"
 
 # Step 1: Generate PKCE code_verifier and code_challenge
 CODE_VERIFIER=$(openssl rand -base64 32 | tr -d '=+/' | cut -c1-43)
