@@ -5,18 +5,25 @@ connection "salesforce" {
   # url = "https://na01.salesforce.com/"
 
   # Authentication method is auto-detected based on which credentials are provided.
-  # Precedence: access_token > private_key/private_key_file (JWT) > username/password
+  # Precedence: access_token > refresh_token > private_key/private_key_file (JWT) > username/password
 
   # Option 1: Pre-obtained OAuth access token
   # access_token = "00D..."
 
-  # Option 2: JWT Bearer flow - requires client_id, username, and private key
+  # Option 2: Refresh Token (OAuth Authorization Code Flow)
+  # Uses a long-lived refresh_token to automatically obtain new access_tokens.
+  # Requires a Connected App with Consumer Key and Consumer Secret.
+  # client_id = "3MVG9...your_consumer_key_here"
+  # client_secret = "your_consumer_secret_here"
+  # refresh_token = "5Aep...your_refresh_token_here"
+
+  # Option 3: JWT Bearer flow - requires client_id, username, and private key
   # client_id = "3MVG99E3Ry5mh4z_FakeID"
   # username = "user@example.com"
   # private_key_file = "/path/to/server.key"
   # private_key = "-----BEGIN RSA PRIVATE KEY-----\n..."
 
-  # Option 3: Username/Password flow
+  # Option 4: Username/Password flow
   # username = "user@example.com"
   # password = "Dummy@~Password"
   # token = "ABO5C3PNqOP0BHsPFakeToken"
